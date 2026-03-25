@@ -1,0 +1,26 @@
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+
+.idea/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+.factorypath
+.vscode/
+
+.quarkus/
+*.orig
+
+# Claude Code local settings
+.claude/settings.local.json
