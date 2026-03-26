@@ -2,6 +2,7 @@ package com.scangovernance.service;
 
 import com.scangovernance.entity.WorkflowEntity;
 import com.scangovernance.model.WorkflowStatus;
+import com.scangovernance.repository.RequestRepository;
 import com.scangovernance.repository.WorkflowRepository;
 import com.scangovernance.temporal.TemporalExecutionInfo;
 import com.scangovernance.temporal.TemporalQueryService;
@@ -40,6 +41,9 @@ public class WorkflowGovernanceService {
     WorkflowRepository workflowRepository;
 
     @Inject
+    RequestRepository requestRepository;
+
+    @Inject
     TemporalQueryService temporalQueryService;
 
     // ── Called by Kafka consumer ─────────────────────────────────────────────
@@ -48,17 +52,29 @@ public class WorkflowGovernanceService {
      * Processes one OCSF Scan Activity Kafka message.
      *
      * @param workflowId   Temporal workflow ID (metadata.original_event_uid)
-     * @param requestRef   Scan request UUID (scan.uid)
+     * @param requestId    Scan request UUID from OCSF (scan.uid = request.request_id)
      * @param scanningTool Product name (metadata.product.name)
      * @param scanType     Scan type (scan.type)
      */
     @Transactional
-    public void handleScanEvent(String workflowId, UUID requestRef,
+    public void handleScanEvent(String workflowId, UUID requestId,
                                 String scanningTool, String scanType) {
 
         if (workflowId == null || workflowId.isBlank()) {
             LOG.warn("Received scan event with null/blank workflow_id – skipping");
             return;
+        }
+
+        // Resolve request_ref: look up the request table PK whose request_id = scan.uid.
+        // The request table is owned by Scan-Service and may not yet have the row if the
+        // message races ahead of the request write; in that case we store null and the
+        // poller can backfill if needed (or the row remains with a null request_ref).
+        UUID requestRef = null;
+        if (requestId != null) {
+            requestRef = requestRepository.findPkByRequestId(requestId).orElse(null);
+            if (requestRef == null) {
+                LOG.warnf("No request row found for request_id=%s – storing request_ref as null", requestId);
+            }
         }
 
         // Idempotency: do not insert a duplicate row for the same (workflowId, requestRef)
@@ -74,11 +90,11 @@ public class WorkflowGovernanceService {
 
         // Insert a placeholder QUEUED row; run_id will be filled in by syncTemporalRuns
         WorkflowEntity entity = new WorkflowEntity();
-        entity.workflowId  = workflowId;
-        entity.requestRef  = requestRef;
+        entity.workflowId   = workflowId;
+        entity.requestRef   = requestRef;
         entity.scanningTool = scanningTool;
-        entity.scanType    = scanType;
-        entity.status      = WorkflowStatus.QUEUED;
+        entity.scanType     = scanType;
+        entity.status       = WorkflowStatus.QUEUED;
         workflowRepository.persist(entity);
 
         LOG.debugf("Inserted QUEUED row: id=%s workflow_id=%s request_ref=%s",

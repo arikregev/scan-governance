@@ -50,26 +50,27 @@ public class ScanEventConsumer {
         }
 
         String workflowId = activity.workflowId();
-        String requestRefStr = activity.requestRef();
+        // scan.uid maps to request.request_id (not the PK); the service resolves the PK
+        String requestIdStr = activity.requestRef();
 
         if (workflowId == null || workflowId.isBlank()) {
             LOG.warnf("Message missing metadata.original_event_uid – skipping. raw=%s", rawMessage);
             return;
         }
 
-        UUID requestRef = null;
-        if (requestRefStr != null && !requestRefStr.isBlank()) {
+        UUID requestId = null;
+        if (requestIdStr != null && !requestIdStr.isBlank()) {
             try {
-                requestRef = UUID.fromString(requestRefStr);
+                requestId = UUID.fromString(requestIdStr);
             } catch (IllegalArgumentException e) {
-                LOG.warnf("scan.uid '%s' is not a valid UUID – storing as null", requestRefStr);
+                LOG.warnf("scan.uid '%s' is not a valid UUID – proceeding with null request_id", requestIdStr);
             }
         }
 
-        LOG.debugf("Processing scan event: workflow_id=%s request_ref=%s tool=%s type=%s",
-                workflowId, requestRef, activity.scanningTool(), activity.scanType());
+        LOG.debugf("Processing scan event: workflow_id=%s request_id=%s tool=%s type=%s",
+                workflowId, requestId, activity.scanningTool(), activity.scanType());
 
-        governanceService.handleScanEvent(workflowId, requestRef,
+        governanceService.handleScanEvent(workflowId, requestId,
                 activity.scanningTool(), activity.scanType());
     }
 }

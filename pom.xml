@@ -66,6 +66,13 @@
       <artifactId>quarkus-scheduler</artifactId>
     </dependency>
 
+    <!-- JDBI – used for read-only queries against the request table -->
+    <dependency>
+      <groupId>io.quarkiverse.jdbi</groupId>
+      <artifactId>quarkus-jdbi</artifactId>
+      <version>1.0.2</version>
+    </dependency>
+
     <!-- JSON -->
     <dependency>
       <groupId>io.quarkus</groupId>
