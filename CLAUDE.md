@@ -176,6 +176,7 @@ Kafka messages are keyed and will be received in order, deal with the issue.
  -- If temporal doesn't have data yet, put QUEUED in status.
  -- If Status is running pull start time, Input and status.
  -- When Status is Completed, update that in DB and fetch the Result and completedat from temporal as well. also using both completed and stated at, calculate the duration of the workflow and commit it in the approprate column.
+ -- time should be set to use UTC timezone everywhere.
 
  Request table which is read only looks like the following:
 CREATE TABLE request (
@@ -197,7 +198,7 @@ CREATE TABLE request (
     CONSTRAINT fk_source FOREIGN KEY (source_ref) REFERENCES source(id)
 );
 
-for our workflow table, we have the request_id, for request_ref we will need to query request table and find the approprate id (PK) to place in the request_ref.
+we received the request_id within the OCSF (scan -> uid), in order to retrive request_ref we will need to query request table and find the approprate id (PK) to place in the request_ref of the workflow table.
 
 after initial writing to DB with the appropriate status fetched from Temporal,
 the `WorkflowStatusPoller` scheduler runs every N seconds (configurable via `scan.governance.poller.interval`)
@@ -217,9 +218,10 @@ src/main/java/com/scangovernance/
     WorkflowStatus.java           – enum (QUEUED/RUNNING/COMPLETED/FAILED/TIMED_OUT/CANCELLED) + Temporal status mapping
     ocsf/                         – OCSF Scan Activity POJOs (ScanActivity, OcsfMetadata, OcsfScan, OcsfProduct, OcsfTag)
   entity/
-    WorkflowEntity.java           – Panache entity for the `workflow` table
+    WorkflowEntity.java           – Plain POJO representing a workflow table row (no ORM annotations)
   repository/
-    WorkflowRepository.java       – Panache repository; queries used by service and poller
+    WorkflowRepository.java       – JDBI repository; explicit insert/update + all query methods with WorkflowEntityMapper
+    RequestRepository.java        – JDBI read-only access to the request table (findPkByRequestId)
   temporal/
     TemporalClientProducer.java   – CDI @Produces for WorkflowServiceStubs + WorkflowClient (lifecycle managed here)
     TemporalQueryService.java     – Wraps Temporal gRPC API: listExecutions, describeExecution, fetchInput/result from history
