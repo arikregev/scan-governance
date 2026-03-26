@@ -16,6 +16,7 @@ Tech Stack:
 - Quarkus 3.31.0
 - Kafka
 - Postgres
+- JDBI
 
 ## Commands
 
@@ -176,10 +177,35 @@ Kafka messages are keyed and will be received in order, deal with the issue.
  -- If Status is running pull start time, Input and status.
  -- When Status is Completed, update that in DB and fetch the Result and completedat from temporal as well. also using both completed and stated at, calculate the duration of the workflow and commit it in the approprate column.
 
+ Request table which is read only looks like the following:
+CREATE TABLE request (
+    id UUID PRIMARY KEY,
+    source_ref UUID,
+    request_id UUID,
+    event_type VARCHAR(50),
+    request_type VARCHAR(50),
+    branch_name VARCHAR(255),
+    build_system VARCHAR(255),
+    build_id VARCHAR(255),
+    source_url VARCHAR(500),
+    git_commit_id VARCHAR(255),
+    expected_workflow_count INTEGER,
+    status VARCHAR(50),
+    description TEXT,
+    created_at TIMESTAMP DEFAULT now(),
+    updated_at TIMESTAMP DEFAULT now(),
+    CONSTRAINT fk_source FOREIGN KEY (source_ref) REFERENCES source(id)
+);
+
+for our workflow table, we have the request_id, for request_ref we will need to query request table and find the approprate id (PK) to place in the request_ref.
+
 after initial writing to DB with the appropriate status fetched from Temporal,
 the `WorkflowStatusPoller` scheduler runs every N seconds (configurable via `scan.governance.poller.interval`)
 and calls `WorkflowGovernanceService.refreshWorkflow()` for each non-terminal row until it reaches a terminal state
 or the configurable timeout expires.
+
+please implement all classes @Inject annotation of variables with Quarkus style writting,
+one @Inject annotation above constructor and all class variables set with private and final. 
 
 ## Code Structure
 
@@ -214,3 +240,4 @@ src/main/resources/
 - **run_id is null initially**: a row is inserted with `status=QUEUED` and `run_id=NULL` on first Kafka message; the run_id is filled in by `syncTemporalRuns` once Temporal has created the execution.
 - **input / result from Temporal history**: input is extracted from the `WorkflowExecutionStarted` event; result/failure from the close event using `HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT`. Temporal's default DataConverter stores payloads as raw UTF-8 JSON in `payload.data`.
 - **All configuration is externalised** via env vars (see `application.properties`). Key vars: `TEMPORAL_HOST`, `TEMPORAL_NAMESPACE`, `KAFKA_BOOTSTRAP_SERVERS`, `KAFKA_SCAN_EVENTS_TOPIC`, `DB_*`, `POLLER_INTERVAL`, `WORKFLOW_TIMEOUT_HOURS`.
+

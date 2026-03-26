@@ -70,9 +70,6 @@ public class WorkflowGovernanceService {
         }
 
         // Resolve request_ref: look up the request table PK whose request_id = scan.uid.
-        // The request table is owned by Scan-Service and may not yet have the row if the
-        // message races ahead of the request write; in that case we store null and the
-        // poller can backfill if needed (or the row remains with a null request_ref).
         UUID requestRef = null;
         if (requestId != null) {
             requestRef = requestRepository.findPkByRequestId(requestId).orElse(null);
@@ -82,14 +79,10 @@ public class WorkflowGovernanceService {
         }
 
         // Idempotency: do not insert a duplicate row for the same (workflowId, requestRef)
-        if (requestRef != null) {
-            boolean exists = workflowRepository
-                    .findByWorkflowIdAndRequestRef(workflowId, requestRef)
-                    .isPresent();
-            if (exists) {
-                LOG.debugf("Duplicate event: workflow_id=%s request_ref=%s – skipped", workflowId, requestRef);
-                return;
-            }
+        if (requestRef != null && workflowRepository
+                .findByWorkflowIdAndRequestRef(workflowId, requestRef).isPresent()) {
+            LOG.debugf("Duplicate event: workflow_id=%s request_ref=%s – skipped", workflowId, requestRef);
+            return;
         }
 
         // Insert a placeholder QUEUED row; run_id will be filled in by syncTemporalRuns
@@ -99,7 +92,7 @@ public class WorkflowGovernanceService {
         entity.scanningTool = scanningTool;
         entity.scanType     = scanType;
         entity.status       = WorkflowStatus.QUEUED;
-        workflowRepository.persist(entity);
+        workflowRepository.insert(entity);
 
         LOG.debugf("Inserted QUEUED row: id=%s workflow_id=%s request_ref=%s",
                 entity.id, workflowId, requestRef);
@@ -130,7 +123,10 @@ public class WorkflowGovernanceService {
         for (TemporalExecutionInfo run : temporalRuns) {
             if (trackedRunIds.contains(run.runId())) {
                 workflowRepository.findByWorkflowIdAndRunId(workflowId, run.runId())
-                        .ifPresent(e -> updateFromTemporalInfo(e, run));
+                        .ifPresent(e -> {
+                            applyTemporalInfo(e, run);
+                            workflowRepository.update(e);
+                        });
             }
         }
 
@@ -152,7 +148,8 @@ public class WorkflowGovernanceService {
                 // Re-use the existing placeholder, filling in the run_id + Temporal data
                 WorkflowEntity placeholder = unassignedPlaceholders.get(i);
                 placeholder.runId = run.runId();
-                updateFromTemporalInfo(placeholder, run);
+                applyTemporalInfo(placeholder, run);
+                workflowRepository.update(placeholder);
                 LOG.debugf("Assigned run_id=%s to existing placeholder id=%s (workflow_id=%s)",
                         run.runId(), placeholder.id, workflowId);
             } else {
@@ -164,8 +161,8 @@ public class WorkflowGovernanceService {
                 newEntity.scanType = workflowRepository.findActiveByWorkflowId(workflowId)
                         .stream().findFirst().map(e -> e.scanType).orElse(null);
                 newEntity.runId = run.runId();
-                updateFromTemporalInfo(newEntity, run);
-                workflowRepository.persist(newEntity);
+                applyTemporalInfo(newEntity, run);
+                workflowRepository.insert(newEntity);
                 LOG.debugf("Created new row for untracked run_id=%s workflow_id=%s", run.runId(), workflowId);
             }
         }
@@ -177,18 +174,20 @@ public class WorkflowGovernanceService {
      */
     @Transactional
     public void refreshWorkflow(UUID entityId) {
-        WorkflowEntity entity = workflowRepository.findById(entityId);
+        WorkflowEntity entity = workflowRepository.findById(entityId).orElse(null);
         if (entity == null || entity.status.isTerminal()) return;
 
         if (entity.runId == null) {
-            // No run_id yet – do a full sync for this workflow_id
             syncTemporalRuns(entity.workflowId);
             return;
         }
 
         temporalQueryService.describeExecution(entity.workflowId, entity.runId)
                 .ifPresentOrElse(
-                        info -> updateFromTemporalInfo(entity, info),
+                        info -> {
+                            applyTemporalInfo(entity, info);
+                            workflowRepository.update(entity);
+                        },
                         () -> LOG.debugf("Temporal execution not found: workflow_id=%s run_id=%s",
                                 entity.workflowId, entity.runId)
                 );
@@ -197,28 +196,27 @@ public class WorkflowGovernanceService {
     /** Marks a workflow row as TIMED_OUT (used by the scheduler). */
     @Transactional
     public void markTimedOut(UUID entityId) {
-        WorkflowEntity entity = workflowRepository.findById(entityId);
+        WorkflowEntity entity = workflowRepository.findById(entityId).orElse(null);
         if (entity != null && !entity.status.isTerminal()) {
             entity.status = WorkflowStatus.TIMED_OUT;
-            entity.updatedAt = LocalDateTime.now();
+            workflowRepository.update(entity);
             LOG.infof("Marked workflow id=%s as TIMED_OUT (workflow_id=%s)", entityId, entity.workflowId);
         }
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
-    private void updateFromTemporalInfo(WorkflowEntity entity, TemporalExecutionInfo info) {
+    /** Applies Temporal execution data onto an entity. Caller is responsible for persisting. */
+    private void applyTemporalInfo(WorkflowEntity entity, TemporalExecutionInfo info) {
         entity.status = info.status();
         entity.runId  = info.runId();
 
         if (info.startTime() != null) {
             entity.startedAt = toLocalDateTime(info.startTime());
         }
-
         if (info.inputJson() != null) {
             entity.input = info.inputJson();
         }
-
         if (info.status().isTerminal()) {
             if (info.closeTime() != null) {
                 entity.completedAt = toLocalDateTime(info.closeTime());
@@ -227,14 +225,11 @@ public class WorkflowGovernanceService {
                 entity.result = info.resultJson();
             }
             if (entity.startedAt != null && entity.completedAt != null) {
-                long seconds = java.time.Duration
+                entity.durationSeconds = (int) java.time.Duration
                         .between(entity.startedAt, entity.completedAt)
                         .getSeconds();
-                entity.durationSeconds = (int) seconds;
             }
         }
-
-        entity.updatedAt = LocalDateTime.now();
     }
 
     private LocalDateTime toLocalDateTime(Instant instant) {

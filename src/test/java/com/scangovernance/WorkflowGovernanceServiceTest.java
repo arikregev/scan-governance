@@ -2,6 +2,7 @@ package com.scangovernance;
 
 import com.scangovernance.entity.WorkflowEntity;
 import com.scangovernance.model.WorkflowStatus;
+import com.scangovernance.repository.RequestRepository;
 import com.scangovernance.repository.WorkflowRepository;
 import com.scangovernance.service.WorkflowGovernanceService;
 import com.scangovernance.temporal.TemporalExecutionInfo;
@@ -9,17 +10,18 @@ import com.scangovernance.temporal.TemporalQueryService;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.junit.QuarkusTest;
 import jakarta.inject.Inject;
-import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.mockito.Mockito;
+import org.mockito.ArgumentCaptor;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.*;
 
 @QuarkusTest
 class WorkflowGovernanceServiceTest {
@@ -27,119 +29,142 @@ class WorkflowGovernanceServiceTest {
     @Inject
     WorkflowGovernanceService governanceService;
 
-    @Inject
+    @InjectMock
     WorkflowRepository workflowRepository;
+
+    @InjectMock
+    RequestRepository requestRepository;
 
     @InjectMock
     TemporalQueryService temporalQueryService;
 
     @BeforeEach
-    @Transactional
-    void cleanUp() {
-        workflowRepository.deleteAll();
-        // Default: Temporal returns no executions
+    void setUp() {
         when(temporalQueryService.listExecutions(anyString())).thenReturn(List.of());
+        when(requestRepository.findPkByRequestId(any())).thenReturn(Optional.empty());
+        when(workflowRepository.findByWorkflowIdAndRequestRef(anyString(), any())).thenReturn(Optional.empty());
+        when(workflowRepository.findTrackedRunIds(anyString())).thenReturn(List.of());
+        when(workflowRepository.findQueuedWithoutRunId(anyString())).thenReturn(List.of());
+        when(workflowRepository.findActiveByWorkflowId(anyString())).thenReturn(List.of());
     }
 
     @Test
-    void handleScanEvent_createsQueuedRow() {
+    void handleScanEvent_insertsQueuedRow() {
+        UUID requestId = UUID.randomUUID();
         UUID requestRef = UUID.randomUUID();
-        String workflowId = "app1:svc:build1:CHECKMARX";
+        String workflowId = "app:svc:build:CHECKMARX";
 
-        governanceService.handleScanEvent(workflowId, requestRef, "CHECKMARX", "SAST");
+        when(requestRepository.findPkByRequestId(requestId)).thenReturn(Optional.of(requestRef));
 
-        List<WorkflowEntity> rows = workflowRepository.list("workflowId", workflowId);
-        assertEquals(1, rows.size());
-        assertEquals(WorkflowStatus.QUEUED, rows.get(0).status);
-        assertNull(rows.get(0).runId);
-        assertEquals(requestRef, rows.get(0).requestRef);
+        governanceService.handleScanEvent(workflowId, requestId, "CHECKMARX", "SAST");
+
+        ArgumentCaptor<WorkflowEntity> captor = ArgumentCaptor.forClass(WorkflowEntity.class);
+        verify(workflowRepository).insert(captor.capture());
+        WorkflowEntity inserted = captor.getValue();
+
+        assertEquals(workflowId, inserted.workflowId);
+        assertEquals(requestRef, inserted.requestRef);
+        assertEquals(WorkflowStatus.QUEUED, inserted.status);
+        assertEquals("CHECKMARX", inserted.scanningTool);
+        assertEquals("SAST", inserted.scanType);
+        assertNull(inserted.runId);
     }
 
     @Test
     void handleScanEvent_isIdempotent() {
+        UUID requestId = UUID.randomUUID();
         UUID requestRef = UUID.randomUUID();
-        String workflowId = "app1:svc:build1:CHECKMARX";
+        String workflowId = "app:svc:build:CHECKMARX";
 
-        governanceService.handleScanEvent(workflowId, requestRef, "CHECKMARX", "SAST");
-        governanceService.handleScanEvent(workflowId, requestRef, "CHECKMARX", "SAST");
+        when(requestRepository.findPkByRequestId(requestId)).thenReturn(Optional.of(requestRef));
+        when(workflowRepository.findByWorkflowIdAndRequestRef(workflowId, requestRef))
+                .thenReturn(Optional.of(new WorkflowEntity()));
 
-        long count = workflowRepository.count("workflowId", workflowId);
-        assertEquals(1, count, "Duplicate message should not insert a second row");
+        governanceService.handleScanEvent(workflowId, requestId, "CHECKMARX", "SAST");
+
+        verify(workflowRepository, never()).insert(any());
     }
 
     @Test
     void syncTemporalRuns_assignsRunIdToQueuedPlaceholder() {
-        UUID requestRef = UUID.randomUUID();
-        String workflowId = "app1:svc:build1:CHECKMARX";
+        String workflowId = "app:svc:build:CHECKMARX";
         String runId = UUID.randomUUID().toString();
 
-        // First call: no Temporal data → QUEUED placeholder inserted
-        governanceService.handleScanEvent(workflowId, requestRef, "CHECKMARX", "SAST");
+        WorkflowEntity placeholder = new WorkflowEntity();
+        placeholder.id = UUID.randomUUID();
+        placeholder.workflowId = workflowId;
+        placeholder.status = WorkflowStatus.QUEUED;
 
-        // Now Temporal has the execution
+        when(workflowRepository.findQueuedWithoutRunId(workflowId)).thenReturn(List.of(placeholder));
+
         TemporalExecutionInfo info = new TemporalExecutionInfo(
                 workflowId, runId, WorkflowStatus.RUNNING,
-                java.time.Instant.now(), null,
-                "{\"scanId\":\"123\"}", null);
+                Instant.now(), null, "{\"scanId\":\"123\"}", null);
         when(temporalQueryService.listExecutions(workflowId)).thenReturn(List.of(info));
 
         governanceService.syncTemporalRuns(workflowId);
 
-        WorkflowEntity entity = workflowRepository
-                .findByWorkflowIdAndRunId(workflowId, runId)
-                .orElseThrow();
-        assertEquals(WorkflowStatus.RUNNING, entity.status);
-        assertEquals(runId, entity.runId);
-        assertNotNull(entity.startedAt);
-        assertEquals("{\"scanId\":\"123\"}", entity.input);
+        assertEquals(runId, placeholder.runId);
+        assertEquals(WorkflowStatus.RUNNING, placeholder.status);
+        assertEquals("{\"scanId\":\"123\"}", placeholder.input);
+        verify(workflowRepository).update(placeholder);
     }
 
     @Test
-    void syncTemporalRuns_catchUp_multiplePlaceholdersMultipleRuns() {
-        String workflowId = "app1:svc:build2:CHECKMARX";
-        UUID ref1 = UUID.randomUUID();
-        UUID ref2 = UUID.randomUUID();
-
-        // Two Kafka messages arrived; service was down so no Temporal data yet
-        governanceService.handleScanEvent(workflowId, ref1, "CHECKMARX", "SAST");
-        governanceService.handleScanEvent(workflowId, ref2, "CHECKMARX", "SAST");
-
-        // Temporal now reports two completed runs
+    void syncTemporalRuns_catchUp_surplusRunCreatesNewRow() {
+        String workflowId = "app:svc:build:SNYK";
         String runId1 = UUID.randomUUID().toString();
         String runId2 = UUID.randomUUID().toString();
+
+        // Only one placeholder but two Temporal runs
+        WorkflowEntity placeholder = new WorkflowEntity();
+        placeholder.id = UUID.randomUUID();
+        placeholder.workflowId = workflowId;
+        placeholder.status = WorkflowStatus.QUEUED;
+
+        when(workflowRepository.findQueuedWithoutRunId(workflowId)).thenReturn(List.of(placeholder));
+
         when(temporalQueryService.listExecutions(workflowId)).thenReturn(List.of(
                 new TemporalExecutionInfo(workflowId, runId1, WorkflowStatus.COMPLETED,
-                        java.time.Instant.now().minusSeconds(120),
-                        java.time.Instant.now().minusSeconds(10),
+                        Instant.now().minusSeconds(120), Instant.now().minusSeconds(10),
                         "{}", "{\"result\":\"ok\"}"),
                 new TemporalExecutionInfo(workflowId, runId2, WorkflowStatus.RUNNING,
-                        java.time.Instant.now(), null, "{}", null)
+                        Instant.now(), null, "{}", null)
         ));
 
         governanceService.syncTemporalRuns(workflowId);
 
-        long count = workflowRepository.count("workflowId", workflowId);
-        assertEquals(2, count);
+        // Placeholder gets first run
+        assertEquals(runId1, placeholder.runId);
+        assertEquals(WorkflowStatus.COMPLETED, placeholder.status);
+        verify(workflowRepository).update(placeholder);
 
-        WorkflowEntity completed = workflowRepository
-                .findByWorkflowIdAndRunId(workflowId, runId1).orElseThrow();
-        assertEquals(WorkflowStatus.COMPLETED, completed.status);
-        assertNotNull(completed.durationSeconds);
-
-        WorkflowEntity running = workflowRepository
-                .findByWorkflowIdAndRunId(workflowId, runId2).orElseThrow();
-        assertEquals(WorkflowStatus.RUNNING, running.status);
+        // Second run triggers a new insert
+        ArgumentCaptor<WorkflowEntity> captor = ArgumentCaptor.forClass(WorkflowEntity.class);
+        verify(workflowRepository).insert(captor.capture());
+        WorkflowEntity newRow = captor.getValue();
+        assertEquals(runId2, newRow.runId);
+        assertEquals(WorkflowStatus.RUNNING, newRow.status);
     }
 
     @Test
     void markTimedOut_setsTerminalStatus() {
-        String workflowId = "app1:svc:build3:SNYK";
-        governanceService.handleScanEvent(workflowId, UUID.randomUUID(), "SNYK", "SCA");
+        UUID entityId = UUID.randomUUID();
+        WorkflowEntity entity = new WorkflowEntity();
+        entity.id = entityId;
+        entity.status = WorkflowStatus.RUNNING;
 
-        WorkflowEntity entity = workflowRepository.list("workflowId", workflowId).get(0);
-        governanceService.markTimedOut(entity.id);
+        when(workflowRepository.findById(entityId)).thenReturn(Optional.of(entity));
 
-        WorkflowEntity updated = workflowRepository.findById(entity.id);
-        assertEquals(WorkflowStatus.TIMED_OUT, updated.status);
+        governanceService.markTimedOut(entityId);
+
+        assertEquals(WorkflowStatus.TIMED_OUT, entity.status);
+        verify(workflowRepository).update(entity);
+    }
+
+    @Test
+    void handleScanEvent_withNullWorkflowId_skips() {
+        governanceService.handleScanEvent(null, UUID.randomUUID(), "CHECKMARX", "SAST");
+        verify(workflowRepository, never()).insert(any());
     }
 }
