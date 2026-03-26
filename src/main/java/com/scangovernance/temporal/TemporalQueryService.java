@@ -27,11 +27,16 @@ public class TemporalQueryService {
 
     private static final Logger LOG = Logger.getLogger(TemporalQueryService.class);
 
-    @Inject
-    WorkflowServiceStubs serviceStubs;
+    private final WorkflowServiceStubs serviceStubs;
+    private final String namespace;
 
-    @ConfigProperty(name = "scan.governance.temporal.namespace", defaultValue = "default")
-    String namespace;
+    @Inject
+    public TemporalQueryService(WorkflowServiceStubs serviceStubs,
+                                @ConfigProperty(name = "scan.governance.temporal.namespace",
+                                                defaultValue = "default") String namespace) {
+        this.serviceStubs = serviceStubs;
+        this.namespace = namespace;
+    }
 
     /**
      * Returns all known executions (open + closed) for the given workflow_id.

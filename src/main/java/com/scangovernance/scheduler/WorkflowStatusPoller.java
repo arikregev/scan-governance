@@ -28,17 +28,23 @@ public class WorkflowStatusPoller {
 
     private static final Logger LOG = Logger.getLogger(WorkflowStatusPoller.class);
 
-    @Inject
-    WorkflowRepository workflowRepository;
+    private final WorkflowRepository workflowRepository;
+    private final WorkflowGovernanceService governanceService;
+    private final int batchSize;
+    private final int timeoutHours;
 
     @Inject
-    WorkflowGovernanceService governanceService;
-
-    @ConfigProperty(name = "scan.governance.poller.batch-size", defaultValue = "100")
-    int batchSize;
-
-    @ConfigProperty(name = "scan.governance.workflow.timeout-hours", defaultValue = "24")
-    int timeoutHours;
+    public WorkflowStatusPoller(WorkflowRepository workflowRepository,
+                                WorkflowGovernanceService governanceService,
+                                @ConfigProperty(name = "scan.governance.poller.batch-size",
+                                                defaultValue = "100") int batchSize,
+                                @ConfigProperty(name = "scan.governance.workflow.timeout-hours",
+                                                defaultValue = "24") int timeoutHours) {
+        this.workflowRepository = workflowRepository;
+        this.governanceService = governanceService;
+        this.batchSize = batchSize;
+        this.timeoutHours = timeoutHours;
+    }
 
     /**
      * Polls all non-terminal workflow rows and refreshes their status from Temporal.

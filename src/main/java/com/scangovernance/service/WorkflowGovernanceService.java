@@ -37,14 +37,18 @@ public class WorkflowGovernanceService {
 
     private static final Logger LOG = Logger.getLogger(WorkflowGovernanceService.class);
 
-    @Inject
-    WorkflowRepository workflowRepository;
+    private final WorkflowRepository workflowRepository;
+    private final RequestRepository requestRepository;
+    private final TemporalQueryService temporalQueryService;
 
     @Inject
-    RequestRepository requestRepository;
-
-    @Inject
-    TemporalQueryService temporalQueryService;
+    public WorkflowGovernanceService(WorkflowRepository workflowRepository,
+                                     RequestRepository requestRepository,
+                                     TemporalQueryService temporalQueryService) {
+        this.workflowRepository = workflowRepository;
+        this.requestRepository = requestRepository;
+        this.temporalQueryService = temporalQueryService;
+    }
 
     // ── Called by Kafka consumer ─────────────────────────────────────────────
 

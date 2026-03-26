@@ -26,11 +26,15 @@ public class ScanEventConsumer {
 
     private static final Logger LOG = Logger.getLogger(ScanEventConsumer.class);
 
-    @Inject
-    ObjectMapper objectMapper;
+    private final ObjectMapper objectMapper;
+    private final WorkflowGovernanceService governanceService;
 
     @Inject
-    WorkflowGovernanceService governanceService;
+    public ScanEventConsumer(ObjectMapper objectMapper,
+                             WorkflowGovernanceService governanceService) {
+        this.objectMapper = objectMapper;
+        this.governanceService = governanceService;
+    }
 
     @Incoming("scan-events")
     @Blocking

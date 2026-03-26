@@ -17,8 +17,12 @@ import java.util.UUID;
 @ApplicationScoped
 public class RequestRepository {
 
+    private final Jdbi jdbi;
+
     @Inject
-    Jdbi jdbi;
+    public RequestRepository(Jdbi jdbi) {
+        this.jdbi = jdbi;
+    }
 
     /**
      * Looks up the primary key ({@code id}) of the request row whose
