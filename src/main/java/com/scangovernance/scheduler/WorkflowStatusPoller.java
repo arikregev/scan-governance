@@ -11,6 +11,7 @@ import org.eclipse.microprofile.config.inject.ConfigProperty;
 import org.jboss.logging.Logger;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 
 /**
@@ -78,7 +79,7 @@ public class WorkflowStatusPoller {
     @Scheduled(every = "1h", identity = "workflow-timeout-checker")
     @Transactional
     public void expireTimedOutWorkflows() {
-        LocalDateTime cutoff = LocalDateTime.now().minusHours(timeoutHours);
+        LocalDateTime cutoff = LocalDateTime.now(ZoneOffset.UTC).minusHours(timeoutHours);
         List<WorkflowEntity> candidates = workflowRepository.findTimedOut(cutoff);
 
         if (candidates.isEmpty()) return;

@@ -3,6 +3,7 @@ package com.scangovernance.entity;
 import com.scangovernance.model.WorkflowStatus;
 
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 /**
@@ -43,6 +44,6 @@ public class WorkflowEntity {
     public LocalDateTime completedAt;
     public Integer durationSeconds;
 
-    public LocalDateTime createdAt = LocalDateTime.now();
-    public LocalDateTime updatedAt = LocalDateTime.now();
+    public LocalDateTime createdAt = LocalDateTime.now(ZoneOffset.UTC);
+    public LocalDateTime updatedAt = LocalDateTime.now(ZoneOffset.UTC);
 }

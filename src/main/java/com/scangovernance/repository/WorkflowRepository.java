@@ -11,6 +11,7 @@ import org.jdbi.v3.core.statement.StatementContext;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -29,8 +30,8 @@ public class WorkflowRepository {
 
     public void insert(WorkflowEntity entity) {
         if (entity.id == null) entity.id = UUID.randomUUID();
-        if (entity.createdAt == null) entity.createdAt = LocalDateTime.now();
-        if (entity.updatedAt == null) entity.updatedAt = LocalDateTime.now();
+        if (entity.createdAt == null) entity.createdAt = LocalDateTime.now(ZoneOffset.UTC);
+        if (entity.updatedAt == null) entity.updatedAt = LocalDateTime.now(ZoneOffset.UTC);
 
         jdbi.useHandle(h -> h.createUpdate("""
                 INSERT INTO workflow
@@ -60,7 +61,7 @@ public class WorkflowRepository {
     }
 
     public void update(WorkflowEntity entity) {
-        entity.updatedAt = LocalDateTime.now();
+        entity.updatedAt = LocalDateTime.now(ZoneOffset.UTC);
 
         jdbi.useHandle(h -> h.createUpdate("""
                 UPDATE workflow SET
