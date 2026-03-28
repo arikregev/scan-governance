@@ -9,6 +9,7 @@ import com.scangovernance.temporal.TemporalQueryService;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
+import jakarta.transaction.Transactional.TxType;
 import org.jboss.logging.Logger;
 
 import java.time.Instant;
@@ -60,7 +61,6 @@ public class WorkflowGovernanceService {
      * @param scanningTool Product name (metadata.product.name)
      * @param scanType     Scan type (scan.type)
      */
-    @Transactional
     public void handleScanEvent(String workflowId, UUID requestId,
                                 String scanningTool, String scanType) {
 
@@ -68,6 +68,27 @@ public class WorkflowGovernanceService {
             LOG.warn("Received scan event with null/blank workflow_id – skipping");
             return;
         }
+
+        // Phase 1 – commit the DB row in its own transaction so a Temporal
+        // failure in phase 2 can never roll it back.
+        insertWorkflowRow(workflowId, requestId, scanningTool, scanType);
+
+        // Phase 2 – best-effort Temporal sync; failures are logged, not propagated.
+        try {
+            syncTemporalRuns(workflowId);
+        } catch (Exception e) {
+            LOG.warnf("Temporal sync failed for workflow_id=%s (row already committed): %s",
+                    workflowId, e.getMessage());
+        }
+    }
+
+    /**
+     * Inserts the QUEUED placeholder row in its own committed transaction.
+     * Separated from the Temporal sync so a Temporal failure cannot roll back the insert.
+     */
+    @Transactional(Transactional.TxType.REQUIRES_NEW)
+    public void insertWorkflowRow(String workflowId, UUID requestId,
+                                  String scanningTool, String scanType) {
 
         // Resolve request_ref: look up the request table PK whose request_id = scan.uid.
         UUID requestRef = null;
@@ -85,7 +106,6 @@ public class WorkflowGovernanceService {
             return;
         }
 
-        // Insert a placeholder QUEUED row; run_id will be filled in by syncTemporalRuns
         WorkflowEntity entity = new WorkflowEntity();
         entity.workflowId   = workflowId;
         entity.requestRef   = requestRef;
@@ -96,10 +116,6 @@ public class WorkflowGovernanceService {
 
         LOG.debugf("Inserted QUEUED row: id=%s workflow_id=%s request_ref=%s",
                 entity.id, workflowId, requestRef);
-
-        // Immediately try to synchronise with Temporal so we have the best possible
-        // initial state (handles catch-up when many runs accumulated while we were down)
-        syncTemporalRuns(workflowId);
     }
 
     // ── Called by scheduler ──────────────────────────────────────────────────
