@@ -33,7 +33,7 @@ public class RequestRepository {
      */
     public Optional<UUID> findPkByRequestId(UUID requestId) {
         return jdbi.withHandle(handle ->
-                handle.createQuery("SELECT id FROM request WHERE request_id = :requestId")
+                handle.createQuery("SELECT id FROM request WHERE request_id = CAST(:requestId AS uuid)")
                         .bind("requestId", requestId)
                         .mapTo(UUID.class)
                         .findFirst()

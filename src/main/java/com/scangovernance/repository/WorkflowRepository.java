@@ -39,7 +39,7 @@ public class WorkflowRepository {
                      status, result, input, started_at, completed_at, duration_seconds,
                      created_at, updated_at)
                 VALUES
-                    (:id, :requestRef, :workflowId, :runId, :scanningTool, :scanType,
+                    (CAST(:id AS uuid), CAST(:requestRef AS uuid), :workflowId, :runId, :scanningTool, :scanType,
                      :status, CAST(:result AS jsonb), CAST(:input AS jsonb),
                      :startedAt, :completedAt, :durationSeconds, :createdAt, :updatedAt)
                 """)
@@ -73,7 +73,7 @@ public class WorkflowRepository {
                     completed_at     = :completedAt,
                     duration_seconds = :durationSeconds,
                     updated_at       = :updatedAt
-                WHERE id = :id
+                WHERE id = CAST(:id AS uuid)
                 """)
                 .bind("id",              entity.id)
                 .bind("runId",           entity.runId)
@@ -90,7 +90,7 @@ public class WorkflowRepository {
     // ── Read operations ──────────────────────────────────────────────────────
 
     public Optional<WorkflowEntity> findById(UUID id) {
-        return jdbi.withHandle(h -> h.createQuery("SELECT * FROM workflow WHERE id = :id")
+        return jdbi.withHandle(h -> h.createQuery("SELECT * FROM workflow WHERE id = CAST(:id AS uuid)")
                 .bind("id", id)
                 .map(new WorkflowEntityMapper())
                 .findFirst());
@@ -107,7 +107,7 @@ public class WorkflowRepository {
 
     public Optional<WorkflowEntity> findByWorkflowIdAndRequestRef(String workflowId, UUID requestRef) {
         return jdbi.withHandle(h -> h.createQuery(
-                        "SELECT * FROM workflow WHERE workflow_id = :workflowId AND request_ref = :requestRef")
+                        "SELECT * FROM workflow WHERE workflow_id = :workflowId AND request_ref = CAST(:requestRef AS uuid)")
                 .bind("workflowId", workflowId)
                 .bind("requestRef", requestRef)
                 .map(new WorkflowEntityMapper())
