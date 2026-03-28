@@ -74,7 +74,16 @@ public class ScanEventConsumer {
         LOG.debugf("Processing scan event: workflow_id=%s request_id=%s tool=%s type=%s",
                 workflowId, requestId, activity.scanningTool(), activity.scanType());
 
-        governanceService.handleScanEvent(workflowId, requestId,
-                activity.scanningTool(), activity.scanType());
+        try {
+            governanceService.handleScanEvent(workflowId, requestId,
+                    activity.scanningTool(), activity.scanType());
+        } catch (Exception e) {
+            // Wrap and rethrow so SmallRye nacks the message → DLQ.
+            // Catching here prevents the exception from reaching the channel
+            // infrastructure, which would transition it to FAILED state and
+            // bring the Kafka health check DOWN.
+            LOG.errorf(e, "Failed to process scan event workflow_id=%s – sending to DLQ", workflowId);
+            throw new RuntimeException("Failed to process scan event", e);
+        }
     }
 }
